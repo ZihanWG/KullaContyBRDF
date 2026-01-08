@@ -208,7 +208,7 @@ Results:
 Computer Graphics / Rendering / XR  
 
 GitHub: https://github.com/THANKSHANK  
-Portfolio: https://zihanw.github.io  
+Portfolio: https://zihanwg.github.io/ZihanW.github.io
 
 ---
 
