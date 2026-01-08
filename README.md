@@ -1,248 +1,218 @@
-📘 Integrating Kulla–Conty BRDF for Real-Time PBR in UE5
+# Integrating Kulla–Conty BRDF for Real-Time PBR in Unreal Engine 5
 
-Real-time multi-scattering energy compensation for GGX in Unreal Engine 5 using precomputed LUTs.
+> Improving energy conservation and multi-scattering for rough materials in UE5
 
-Author: Zihan Wang, Shengyan Xu
-Engine: Unreal Engine 5
-Keywords: PBR, BRDF, GGX, Multi-Scattering, HLSL, UE5, Rendering
+This project integrates a **Kulla–Conty BRDF** into Unreal Engine 5 to improve **specular energy preservation** and **multi-scattering approximation** for rough surfaces in real-time rendering.
 
-🔍 Overview
+It demonstrates my experience in **physically based rendering, Monte-Carlo integration, BRDF modeling, LUT precomputation, and Unreal Engine shader system customization.**
 
-Modern real-time engines commonly use a GGX microfacet BRDF with single-scattering approximation.
-While efficient, it loses significant specular energy on rough surfaces, resulting in:
+---
 
-Dim highlights
+## 📌 Overview
 
-Over-darkened mid/high roughness materials
+Unreal Engine 5’s default GGX-based BRDF models primarily **single-scattering** and applies limited energy compensation.  
+At **medium-to-high roughness**, noticeable **specular energy loss** still occurs, resulting in dim highlights and less physically plausible materials.
 
-Violation of energy conservation
+This project implements a **Kulla–Conty BRDF model** to approximate:
 
-This project integrates the Kulla–Conty BRDF model into Unreal Engine 5 to approximate multi-scattering reflection and recover lost energy using precomputed lookup tables (LUTs).
+- Multi-bounce microfacet scattering  
+- Improved energy conservation  
+- More physically realistic rough surface reflections  
 
-We implemented:
+The model is evaluated in real time using **precomputed lookup tables (LUTs)** and a **custom HLSL material node** inside UE5.
 
-Offline Monte Carlo integration of BRDF terms
+---
 
-Split-sum LUT for specular response
+## ✨ Key Features
 
-Average energy LUT for multi-bounce correction
+- Monte-Carlo integration of Kulla–Conty BRDF  
+- Split-sum approximation for real-time evaluation  
+- Multi-scattering energy compensation  
+- Offline precomputed LUT pipeline  
+- Custom HLSL integration into UE5 material system  
+- Visual comparison under controlled lighting  
 
-Custom HLSL BRDF inside UE5 material system
+---
 
-✨ Features
+## 🎯 Motivation
 
-✅ Multi-scattering energy compensation
+Standard GGX BRDF only models **single scattering**, which leads to:
 
-✅ Physically-based, roughness-aware specular correction
+- Specular energy loss  
+- Darkened highlights on rough materials  
+- Non-physical appearance under strong lighting  
 
-✅ Offline LUT generation (CPU)
+The **Kulla–Conty BRDF** approximates **multiple microfacet bounces**, redistributing lost energy back into the specular response.
 
-✅ Real-time material integration in UE5
+This project explores:
 
-✅ Side-by-side comparison with UE5 default BRDF
+> How much visual improvement can physically-based multi-scattering bring to real-time UE5 materials?
 
-📐 Theory Recap (Kulla–Conty BRDF)
+---
 
-Traditional GGX assumes only single-bounce microfacet reflection:
+## 🧮 Theory Summary
 
-energy is lost when light scatters between microfacets.
+We follow the **Kulla–Conty microfacet framework** with:
 
-Kulla–Conty extends this by modeling:
+### 1. Split-Sum Approximation
 
-average lost energy
+The specular BRDF integral is decomposed into:
 
-multi-bounce redistribution
+- **A-term:** non-Fresnel component  
+- **B-term:** Fresnel-weighted component  
 
-roughness-dependent compensation
+Stored in a 2D LUT:  
+`E_mu(N·V, roughness)`
 
-We approximate this with two LUTs:
+---
 
-E(μ) – Split-sum terms (A/B)
+### 2. Multi-Scattering Compensation
 
-E_avg – Average multi-scatter energy
+We additionally compute:
 
-Indexed by:
+- **E_avg:** average energy loss of single scattering  
 
-u = N · V  
-v = Roughness
+This allows reconstructing the **multi-bounce contribution** at runtime.
 
+Final evaluation requires only:
 
-So runtime shading becomes:
+- 2 LUT samples  
+- Fresnel evaluation  
+- Simple normalization math  
 
-2 texture fetches + small HLSL function
+No runtime Monte-Carlo sampling is required.
 
+---
 
-instead of thousands of samples per pixel.
+## 🛠 Offline LUT Generation
 
-🧮 Offline LUT Generation
+Two 256×256 textures are precomputed on CPU:
 
-Resolution: 256 × 256
-Samples per pixel: 1024 (Hammersley + GGX importance sampling)
+| LUT   | Description |
+|-------|-------------|
+| E_mu  | Split-sum A/B terms |
+| E_avg | Multi-scattering average energy |
 
-We compute:
+### Method
 
-1️⃣ Split-sum LUT (Eμ)
+- Hammersley low-discrepancy sampling  
+- GGX importance sampling  
+- 1024 samples per texel  
+- Smith masking-shadowing  
+- Schlick Fresnel approximation  
 
-Stores:
+### Parameterization
 
-R → A term
+- **X:** N·V  
+- **Y:** Roughness  
 
-G → B term
+The generated LUTs are stored as linear PNG textures and imported into Unreal Engine.
 
-From:
+---
 
-A += (1 − F) · Gvis  
-B += F · Gvis
+## 🎮 Unreal Engine 5 Integration
 
-2️⃣ Multi-scatter LUT (Eavg)
+### Texture Setup
 
-Stores average lost energy across microfacets.
+- sRGB: OFF  
+- Compression: VectorDisplacement  
+- Filter: Bilinear / Trilinear  
 
-Sampling pipeline
+### Material Pipeline
 
-Hammersley low-discrepancy sequence
+1. Compute `N·V` using `CameraVectorWS · PixelNormalWS`  
+2. Use `(N·V, Roughness)` as LUT UVs  
+3. Sample:
+   - `E_mu` → A & B terms  
+   - `E_avg` → average energy  
+4. Evaluate final BRDF using a **Custom HLSL Node**
 
-ImportanceSampleGGX
+The output replaces UE5’s default specular BRDF response.
 
-Schlick Fresnel
+---
 
-Smith geometry
+## 🧪 Experiments
 
-All integrals are evaluated offline and saved as PNG LUTs.
+### Roughness Row Test
 
-🎮 Unreal Engine 5 Integration
-Texture Setup
+- Metallic spheres from roughness 0 → 1  
+- Directional light  
+- Top: UE5 default BRDF  
+- Bottom: Kulla–Conty BRDF  
 
-Import LUTs into UE5 and set:
+Results:
 
-sRGB → ❌ Off
+- Low roughness: nearly identical  
+- Medium roughness: stronger, more stable highlights  
+- High roughness: better energy preservation  
 
-Compression → VectorDisplacementMap
+---
 
-Filter → Bilinear / Trilinear
+### Cornell Box Test
 
-UV Construction
-u = saturate(dot(NormalWS, ViewDirWS))  
-v = Roughness
+- Controlled lighting environment  
+- Identical materials  
+- Side-by-side comparison  
 
+Results:
 
-Use:
+- Improved brightness consistency  
+- Better grazing-angle response  
+- Clearer energy retention at mid roughness  
 
-CameraVectorWS
+---
 
-PixelNormalWS
+## 📊 Conclusion
 
-Dot
+- UE5’s default BRDF already applies partial compensation  
+- Full Kulla–Conty BRDF provides **more physically accurate energy behavior**  
+- Improvements are most noticeable at **medium roughness**  
+- Suitable for:
+  - Rendering research  
+  - Shader and material system development  
+  - Physically-based lighting studies  
 
-AppendVector
+---
 
-Custom HLSL Node
+## ⚠ Limitations
 
-Core KC shading logic is implemented inside a Custom Material Expression:
+- Evaluated only on simple test scenes  
+- Performance overhead not deeply profiled  
+- Visual differences are subtle in low-complexity materials  
+- More complex layered materials may benefit more
 
-Main steps:
+---
 
-Schlick Fresnel
+## 🧑‍💻 My Contribution
 
-Blend Eμ LUT channels
+- Designed LUT precomputation pipeline  
+- Implemented Monte-Carlo GGX integrator  
+- Generated E_mu and E_avg textures  
+- Integrated custom BRDF into UE5 material system  
+- Built evaluation scenes and comparison tests  
 
-Blend Eavg LUT channels
+---
 
-Multi-scatter compensation
+## 📚 References
 
-Clamp and stabilize
+- Kulla, C. & Conty, A.  
+  *Revisiting Physically Based Shading at Imageworks*  
+- Epic Games — Unreal Engine 5 Rendering Documentation  
+- UE5 Fab Parametric Cornell Box
 
-Output feeds the specular term.
+---
 
-🧪 Results
-Row Roughness Test
+## 👤 Author
 
-0.0 → 1.0 roughness sweep
+**Zihan Wang (王滋涵)**  
+Computer Graphics / Rendering / XR  
 
-Top: UE5 default BRDF
+GitHub: https://github.com/THANKSHANK  
+Portfolio: https://zihanw.github.io  
 
-Bottom: KC BRDF
+---
 
-Observations:
+## 📎 Related Article
 
-Low roughness: nearly identical
-
-Medium roughness:
-
-brighter highlights
-
-less energy loss
-
-stronger grazing response
-
-High roughness: subtle but more physically plausible brightness
-
-Cornell Box Test
-
-Controlled lighting comparison:
-
-KC BRDF shows:
-
-improved brightness preservation
-
-stronger indirect response
-
-better behavior under rough materials
-
-📊 Conclusion
-
-UE5 default BRDF already applies partial energy compensation
-
-KC BRDF improves physical accuracy, especially at mid-roughness
-
-Differences are subtle but measurable
-
-Particularly useful for:
-
-film-quality real-time rendering
-
-HDR lighting
-
-layered / rough materials
-
-⚠️ Limitations
-
-Tested mainly on analytic objects (spheres)
-
-No GPU performance profiling yet
-
-Static lighting scenarios only
-
-Future improvements:
-
-performance benchmarking
-
-complex asset validation
-
-integration at engine shading model level
-
-🛠 Tech Stack
-
-C++ (offline integration tool)
-
-Monte Carlo integration
-
-Unreal Engine 5
-
-HLSL custom material nodes
-
-Physically Based Rendering
-
-📎 Reference
-
-Kulla, C., Conty, A. Revisiting Physically Based Shading at Imageworks
-
-Epic Games PBR shading model
-
-UE5 material system
-
-👤 Author
-
-Zihan Wang
-Computer Graphics / Rendering / XR
-Rochester Institute of Technology
+Technical write-up:  
+https://zihanwportfolio.wordpress.com/2025/05/06/integrating-kulla-conty-brdf-for-real-time-pbr-in-ue5/
