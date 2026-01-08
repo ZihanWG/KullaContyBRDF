@@ -1,5 +1,5 @@
-![Roughness Test](images/roughness_row.png)
-![Cornell Box](images/cornell_box.png)
+![Roughness Test](roughness_row.png)
+![Cornell Box](cornell_box.png)
 # Integrating Kulla–Conty BRDF for Real-Time PBR in Unreal Engine 5
 
 > Improving energy conservation and multi-scattering for rough materials in UE5
