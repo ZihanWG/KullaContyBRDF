@@ -209,8 +209,8 @@ Results:
 **Zihan Wang (王滋涵)**  
 Computer Graphics / Rendering / XR  
 
-GitHub: https://github.com/THANKSHANK  
-Portfolio: https://zihanwg.github.io/portfolio.github.io
+GitHub: https://github.com/ZihanWG
+Portfolio: https://zihanwg.github.io/portfolio.github.io / https://zihanwg.github.io/ZihanW.github.io/
 
 ---
 
