@@ -19,10 +19,13 @@ Saved/
 *.recipe
 *.tlog
 *.vcxproj.user
+**/__pycache__/
 
 # Reproducible LUT output
 LUT/Generated/
 LUT/build/
+BenchmarkResults/
+ImageComparison/
 
 # OS and editor noise
 .DS_Store

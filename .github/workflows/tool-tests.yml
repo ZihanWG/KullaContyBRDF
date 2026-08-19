@@ -1,0 +1,25 @@
+name: Validation tool tests
+
+on:
+  push:
+    paths:
+      - "Tools/SummarizeUECsvProfile.py"
+      - "Tools/Tests/**"
+      - ".github/workflows/tool-tests.yml"
+  pull_request:
+    paths:
+      - "Tools/SummarizeUECsvProfile.py"
+      - "Tools/Tests/**"
+      - ".github/workflows/tool-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  csv-summary-tests:
+    name: Unreal CSV paired-statistics tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run standard-library unit tests
+        run: python -m unittest discover -s Tools/Tests -v

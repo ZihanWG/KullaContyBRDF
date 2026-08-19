@@ -35,6 +35,15 @@ struct IntegratedBRDF {
     float directionalAlbedo = 0.0f;
 };
 
+struct ValidationMetrics {
+    double whiteFurnaceMaxError = 0.0;
+    double whiteFurnaceRmsError = 0.0;
+    double gauss4AverageMaxError = 0.0;
+    double gauss4AverageRmsError = 0.0;
+    double maximumColoredDirectionalAlbedo = 0.0;
+    bool passed = false;
+};
+
 struct Options {
     int size = 256;
     int sampleCount = 1024;
@@ -52,6 +61,14 @@ Vec3 Normalize(const Vec3& value) {
     }
     const float inverseLength = 1.0f / std::sqrt(lengthSquared);
     return {value.x * inverseLength, value.y * inverseLength, value.z * inverseLength};
+}
+
+Vec3 Cross(const Vec3& a, const Vec3& b) {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    };
 }
 
 float Pow5(float value) {
@@ -72,13 +89,39 @@ Vec2 Hammersley(std::uint32_t index, std::uint32_t count) {
     return {static_cast<float>(index) / static_cast<float>(count), RadicalInverseVdC(index)};
 }
 
-Vec3 ImportanceSampleGGX(const Vec2& xi, float alpha) {
-    const float alphaSquared = alpha * alpha;
-    const float phi = 2.0f * kPi * xi.x;
-    const float denominator = 1.0f + (alphaSquared - 1.0f) * xi.y;
-    const float cosTheta = std::sqrt(std::max((1.0f - xi.y) / denominator, 0.0f));
-    const float sinTheta = std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f));
-    return Normalize({sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta});
+// Heitz 2018 visible-normal sampling for an isotropic GGX distribution.
+// Sampling the VNDF changes the directional-albedo estimator to G1(L), which
+// has much lower variance than sampling the full NDF at smooth grazing angles.
+Vec3 ImportanceSampleGGXVNDF(const Vec3& view, const Vec2& xi, float alpha) {
+    const Vec3 stretchedView = Normalize({alpha * view.x, alpha * view.y, view.z});
+
+    const float lensq = stretchedView.x * stretchedView.x +
+                        stretchedView.y * stretchedView.y;
+    const Vec3 tangent1 = lensq > 0.0f
+        ? Vec3{-stretchedView.y / std::sqrt(lensq),
+               stretchedView.x / std::sqrt(lensq), 0.0f}
+        : Vec3{1.0f, 0.0f, 0.0f};
+    const Vec3 tangent2 = Cross(stretchedView, tangent1);
+
+    const float radius = std::sqrt(xi.x);
+    const float phi = 2.0f * kPi * xi.y;
+    const float t1 = radius * std::cos(phi);
+    float t2 = radius * std::sin(phi);
+    const float blend = 0.5f * (1.0f + stretchedView.z);
+    t2 = (1.0f - blend) * std::sqrt(std::max(1.0f - t1 * t1, 0.0f)) +
+         blend * t2;
+
+    const float normalComponent =
+        std::sqrt(std::max(1.0f - t1 * t1 - t2 * t2, 0.0f));
+    const Vec3 visibleNormal{
+        t1 * tangent1.x + t2 * tangent2.x + normalComponent * stretchedView.x,
+        t1 * tangent1.y + t2 * tangent2.y + normalComponent * stretchedView.y,
+        t1 * tangent1.z + t2 * tangent2.z + normalComponent * stretchedView.z,
+    };
+
+    return Normalize({alpha * visibleNormal.x,
+                      alpha * visibleNormal.y,
+                      std::max(visibleNormal.z, 0.0f)});
 }
 
 // Exact separable Smith masking-shadowing for isotropic GGX. The runtime HLSL
@@ -101,7 +144,7 @@ IntegratedBRDF IntegrateBRDF(float noV, float perceptualRoughness, int sampleCou
     for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
         const Vec2 xi = Hammersley(static_cast<std::uint32_t>(sampleIndex),
                                    static_cast<std::uint32_t>(sampleCount));
-        const Vec3 halfVector = ImportanceSampleGGX(xi, alpha);
+        const Vec3 halfVector = ImportanceSampleGGXVNDF(view, xi, alpha);
         const float voH = std::max(Dot(view, halfVector), 0.0f);
         const Vec3 light = Normalize({
             2.0f * voH * halfVector.x - view.x,
@@ -110,13 +153,12 @@ IntegratedBRDF IntegrateBRDF(float noV, float perceptualRoughness, int sampleCou
         });
 
         const float noL = std::max(light.z, 0.0f);
-        const float noH = std::max(halfVector.z, 0.0f);
-        if (noL <= 0.0f || noH <= 0.0f || voH <= 0.0f) {
+        if (noL <= 0.0f || voH <= 0.0f) {
             continue;
         }
 
-        const float geometry = SmithG1GGX(noV, alpha) * SmithG1GGX(noL, alpha);
-        const float visibilityWeight = geometry * voH / std::max(noV * noH, 1.0e-7f);
+        // For GGX VNDF sampling, f_ss * NoL / pdf(L) simplifies to G1(L).
+        const float visibilityWeight = SmithG1GGX(noL, alpha);
         const float fresnelCoefficient = Pow5(1.0f - voH);
 
         result.splitA += (1.0f - fresnelCoefficient) * visibilityWeight;
@@ -290,7 +332,7 @@ void WriteMetadata(const std::filesystem::path& path, const Options& options,
     }
     stream << std::fixed << std::setprecision(8)
            << "{\n"
-           << "  \"generator\": \"KullaContyBRDF LUT generator v2\",\n"
+           << "  \"generator\": \"KullaContyBRDF LUT generator v3\",\n"
            << "  \"resolution\": " << options.size << ",\n"
            << "  \"samples_per_texel\": " << options.sampleCount << ",\n"
            << "  \"parameterization\": {\"x\": \"NdotX\", \"y\": \"perceptual_roughness\"},\n"
@@ -299,7 +341,128 @@ void WriteMetadata(const std::filesystem::path& path, const Options& options,
            << "  \"E_mu_range\": [" << minimumE << ", " << maximumE << "],\n"
            << "  \"E_avg_range\": [" << minimumAverage << ", " << maximumAverage << "],\n"
            << "  \"primary_outputs\": [\"E_mu.png\", \"E_avg.png\", \"BRDF_SplitSum.png\"],\n"
-           << "  \"reference_outputs\": [\"E_mu.pfm\", \"E_avg.pfm\", \"BRDF_SplitSum.pfm\"]\n"
+           << "  \"reference_outputs\": [\"E_mu.pfm\", \"E_avg.pfm\", \"BRDF_SplitSum.pfm\"],\n"
+           << "  \"validation\": \"validation.json\"\n"
+           << "}\n";
+}
+
+ValidationMetrics ValidateLUTs(const Options& options,
+                               const std::vector<float>& directionalAlbedo,
+                               const std::vector<float>& averageAlbedo,
+                               const std::vector<float>& splitSum) {
+    constexpr float gaussMu[4] = {
+        0.0694318442f, 0.3300094782f, 0.6699905218f, 0.9305681558f};
+    constexpr float gaussWeight[4] = {
+        0.1739274226f, 0.3260725774f, 0.3260725774f, 0.1739274226f};
+    constexpr float testF0[3] = {0.04f, 0.5f, 0.9f};
+    // The Kulla-Conty denominator becomes numerically singular as E_avg -> 1.
+    // Validate the operational domain used by this UE project, whose renderer
+    // clamps minimum perceptual roughness to 0.02.
+    constexpr double minimumValidationRoughness = 0.02;
+    constexpr double minimumValidationNoV = 0.02;
+    // The max threshold accounts for finite-precision E_avg storage close to
+    // the smooth-limit singularity; the RMS error remains much lower.
+    constexpr double whiteFurnaceTolerance = 5.0e-4;
+    constexpr double gauss4Tolerance = 1.0e-3;
+    constexpr double coloredEnergyTolerance = 1.0e-3;
+
+    ValidationMetrics metrics;
+    double whiteSquaredError = 0.0;
+    double gaussSquaredError = 0.0;
+    std::size_t whiteSampleCount = 0;
+
+    for (int y = 0; y < options.size; ++y) {
+        const float roughness = (static_cast<float>(y) + 0.5f) /
+                                static_cast<float>(options.size);
+        const std::size_t rowOffset = static_cast<std::size_t>(y * options.size * 3);
+        const double eAverage = averageAlbedo[rowOffset];
+
+        double missingEnergyIntegral = 0.0;
+        for (int lightIndex = 0; lightIndex < options.size; ++lightIndex) {
+            const double noL = (static_cast<double>(lightIndex) + 0.5) /
+                               static_cast<double>(options.size);
+            const std::size_t offset = rowOffset + static_cast<std::size_t>(lightIndex * 3);
+            missingEnergyIntegral += (1.0 - directionalAlbedo[offset]) * noL;
+        }
+        missingEnergyIntegral *= 2.0 / static_cast<double>(options.size);
+
+        double gaussAverage = 0.0;
+        for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex) {
+            const IntegratedBRDF integrated =
+                IntegrateBRDF(gaussMu[sampleIndex], roughness, options.sampleCount);
+            gaussAverage += 2.0 * gaussWeight[sampleIndex] *
+                            integrated.directionalAlbedo * gaussMu[sampleIndex];
+        }
+        const double gaussError = std::abs(gaussAverage - eAverage);
+        metrics.gauss4AverageMaxError = std::max(metrics.gauss4AverageMaxError, gaussError);
+        gaussSquaredError += gaussError * gaussError;
+
+        for (int viewIndex = 0; viewIndex < options.size; ++viewIndex) {
+            const std::size_t offset = rowOffset + static_cast<std::size_t>(viewIndex * 3);
+            const double eNoV = directionalAlbedo[offset];
+            const double missingAverage = 1.0 - eAverage;
+            const double multipleScatterAlbedo = missingAverage > 1.0e-7
+                ? (1.0 - eNoV) * missingEnergyIntegral / missingAverage
+                : 0.0;
+            const double noV = (static_cast<double>(viewIndex) + 0.5) /
+                               static_cast<double>(options.size);
+            if (roughness >= minimumValidationRoughness && noV >= minimumValidationNoV) {
+                const double whiteFurnaceEnergy = eNoV + multipleScatterAlbedo;
+                const double whiteError = std::abs(whiteFurnaceEnergy - 1.0);
+                metrics.whiteFurnaceMaxError =
+                    std::max(metrics.whiteFurnaceMaxError, whiteError);
+                whiteSquaredError += whiteError * whiteError;
+                ++whiteSampleCount;
+            }
+
+            const double splitA = splitSum[offset];
+            const double splitB = splitSum[offset + 1];
+            for (const float f0 : testF0) {
+                const double fAverage = f0 + (1.0 - f0) / 21.0;
+                const double fMultipleScatter =
+                    fAverage * eAverage /
+                    std::max(1.0 - fAverage * (1.0 - eAverage), 1.0e-7);
+                const double singleScatterAlbedo = splitA * f0 + splitB * (1.0 - f0);
+                const double combinedAlbedo =
+                    singleScatterAlbedo + fMultipleScatter * (1.0 - eNoV);
+                metrics.maximumColoredDirectionalAlbedo =
+                    std::max(metrics.maximumColoredDirectionalAlbedo, combinedAlbedo);
+            }
+        }
+    }
+
+    metrics.whiteFurnaceRmsError = whiteSampleCount > 0
+        ? std::sqrt(whiteSquaredError / static_cast<double>(whiteSampleCount))
+        : 0.0;
+    metrics.gauss4AverageRmsError =
+        std::sqrt(gaussSquaredError / static_cast<double>(options.size));
+    metrics.passed =
+        metrics.whiteFurnaceMaxError <= whiteFurnaceTolerance &&
+        metrics.gauss4AverageMaxError <= gauss4Tolerance &&
+        metrics.maximumColoredDirectionalAlbedo <= 1.0 + coloredEnergyTolerance;
+    return metrics;
+}
+
+void WriteValidation(const std::filesystem::path& path,
+                     const Options& options,
+                     const ValidationMetrics& metrics) {
+    std::ofstream stream(path);
+    if (!stream) {
+        throw std::runtime_error("Could not write validation file: " + path.string());
+    }
+    stream << std::fixed << std::setprecision(10)
+           << "{\n"
+           << "  \"resolution\": " << options.size << ",\n"
+           << "  \"samples_per_texel\": " << options.sampleCount << ",\n"
+           << "  \"white_furnace_max_abs_error\": " << metrics.whiteFurnaceMaxError << ",\n"
+           << "  \"white_furnace_rms_error\": " << metrics.whiteFurnaceRmsError << ",\n"
+           << "  \"gauss4_eavg_max_abs_error\": " << metrics.gauss4AverageMaxError << ",\n"
+           << "  \"gauss4_eavg_rms_error\": " << metrics.gauss4AverageRmsError << ",\n"
+           << "  \"maximum_colored_directional_albedo\": "
+           << metrics.maximumColoredDirectionalAlbedo << ",\n"
+           << "  \"white_furnace_domain\": {\"minimum_roughness\": 0.02, \"minimum_NdotV\": 0.02},\n"
+           << "  \"tolerances\": {\"white_furnace\": 0.0005, \"gauss4_eavg\": 0.001, \"colored_energy\": 0.001},\n"
+           << "  \"passed\": " << (metrics.passed ? "true" : "false") << "\n"
            << "}\n";
 }
 
@@ -398,12 +561,24 @@ int main(int argc, char** argv) {
         WriteAllFormats("E_mu", directionalAlbedo);
         WriteAllFormats("E_avg", averageAlbedo);
         WriteAllFormats("BRDF_SplitSum", splitSum);
+        const ValidationMetrics validation =
+            ValidateLUTs(options, directionalAlbedo, averageAlbedo, splitSum);
+        WriteValidation(options.outputDirectory / "validation.json", options, validation);
         WriteMetadata(options.outputDirectory / "metadata.json", options,
                       minimumE, maximumE, minimumAverage, maximumAverage);
 
+        if (!validation.passed) {
+            throw std::runtime_error(
+                "LUT validation failed; inspect validation.json for numerical errors");
+        }
+
         std::cout << "Generated Kulla-Conty LUTs in " << options.outputDirectory << '\n'
                   << "E(mu) range: [" << minimumE << ", " << maximumE << "]\n"
-                  << "E(avg) range: [" << minimumAverage << ", " << maximumAverage << "]\n";
+                  << "E(avg) range: [" << minimumAverage << ", " << maximumAverage << "]\n"
+                  << "White-furnace max error: " << validation.whiteFurnaceMaxError << '\n'
+                  << "Gauss-4 E(avg) max error: " << validation.gauss4AverageMaxError << '\n'
+                  << "Maximum colored directional albedo: "
+                  << validation.maximumColoredDirectionalAlbedo << '\n';
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << '\n';

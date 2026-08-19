@@ -1,0 +1,37 @@
+name: E_avg shader validation
+
+on:
+  push:
+    paths:
+      - "EnginePatch/UE5.8.1/KullaContyEAvg.ush"
+      - "EnginePatch/UE5.8.1/Test-EAvgShader.ps1"
+      - "EnginePatch/UE5.8.1/Tests/KullaContyEAvgSmoke.hlsl"
+      - ".github/workflows/shader-validation.yml"
+  pull_request:
+    paths:
+      - "EnginePatch/UE5.8.1/KullaContyEAvg.ush"
+      - "EnginePatch/UE5.8.1/Test-EAvgShader.ps1"
+      - "EnginePatch/UE5.8.1/Tests/KullaContyEAvgSmoke.hlsl"
+      - ".github/workflows/shader-validation.yml"
+  workflow_dispatch:
+
+jobs:
+  compile-and-inspect:
+    name: Windows FXC and DXC
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compile and inspect SM5 and SM6
+        shell: pwsh
+        run: .\EnginePatch\UE5.8.1\Test-EAvgShader.ps1
+
+      - name: Upload compiler disassembly
+        uses: actions/upload-artifact@v4
+        with:
+          name: eavg-shader-disassembly
+          path: |
+            Intermediate/KullaConty/KullaContyEAvgSmoke.sm5.asm
+            Intermediate/KullaConty/KullaContyEAvgSmoke.sm6.asm
+          if-no-files-found: error

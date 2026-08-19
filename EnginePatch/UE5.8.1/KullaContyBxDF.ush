@@ -1,0 +1,92 @@
+#pragma once
+
+// Kulla-Conty multiple-scattering compensation for UE's legacy GGX shading path.
+// E(mu) comes from UE's own GGX directional-albedo LUT so that the compensation
+// matches the single-scattering implementation used by the renderer.
+
+#include "KullaContyEAvg.ush"
+
+float3 KCAverageSchlickFresnel(float3 F0)
+{
+	return F0 + (1.0f - F0) * (1.0f / 21.0f);
+}
+
+float3 KullaContyMultipleScatter(
+	float Roughness,
+	float NoV,
+	float NoL,
+	float3 F0,
+	out float3 CombinedDirectionalAlbedo)
+{
+	const float2 SplitSumV = GGXEnergyLookupEnv(Roughness, NoV);
+	const float ENoV = saturate(SplitSumV.x);
+	const float ENoL = saturate(GGXEnergyLookupEnv(Roughness, NoL).x);
+	const float EAvg = KCAverageGGXDirectionalAlbedo(Roughness);
+
+	const float3 FAvg = KCAverageSchlickFresnel(saturate(F0));
+	const float3 Fms = (FAvg * EAvg) / max(1.0f - FAvg * (1.0f - EAvg), 1.0e-5f);
+	const float Shape = ((1.0f - ENoV) * (1.0f - ENoL)) /
+		(PI * max(1.0f - EAvg, 1.0e-5f));
+
+	// UE stores the GGX split sum as E.x * F0 + E.y * (F90 - F0).
+	// This model deliberately uses Schlick F90=1 to match the Kulla-Conty derivation.
+	const float3 SingleScatterAlbedo = SplitSumV.x * F0 + SplitSumV.y * (1.0f - F0);
+	const float3 MultiScatterAlbedo = Fms * (1.0f - ENoV);
+	CombinedDirectionalAlbedo = saturate(SingleScatterAlbedo + MultiScatterAlbedo);
+
+	return Fms * Shape;
+}
+
+FDirectLighting KullaContyBxDF(FGBufferData GBuffer, half3 N, half3 V, FAreaLight AreaLight, FShadowTerms Shadow)
+{
+	FDirectLighting Lighting = (FDirectLighting)0;
+
+	BRANCH
+	if (AreaLight.NoL > 0.0f)
+	{
+		BxDFContext Context;
+		Init(Context, N, V, AreaLight.SpecularL);
+		SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
+		Context.NoV = saturate(abs(Context.NoV) + 1.0e-5f);
+
+		const float NoL = saturate(AreaLight.NoL);
+		const float3 IncidentRadianceTimesNoL =
+			AreaLight.FalloffColor * (AreaLight.Falloff * NoL);
+
+		float3 CombinedDirectionalAlbedo;
+		const float3 MultipleScatter = KullaContyMultipleScatter(
+			GBuffer.Roughness,
+			Context.NoV,
+			NoL,
+			GBuffer.SpecularColor,
+			CombinedDirectionalAlbedo);
+
+		Lighting.Diffuse = Diffuse_Lambert(GBuffer.DiffuseColor);
+		Lighting.Diffuse *= 1.0f - saturate(Luminance(CombinedDirectionalAlbedo));
+		Lighting.Diffuse *= IncidentRadianceTimesNoL;
+
+		if (IsRectLight(AreaLight))
+		{
+			// UE's LTC remains the single-scatter approximation for rectangular lights.
+			Lighting.Specular = RectGGXApproxLTC(
+				GBuffer.Roughness,
+				GBuffer.SpecularColor,
+				N,
+				V,
+				AreaLight.Rect,
+				AreaLight.Texture);
+		}
+		else
+		{
+			Lighting.Specular = IncidentRadianceTimesNoL * SpecularGGX(
+				GBuffer.Roughness,
+				GBuffer.SpecularColor,
+				Context,
+				AreaLight);
+		}
+
+		Lighting.Specular += IncidentRadianceTimesNoL * MultipleScatter;
+	}
+
+	return Lighting;
+}

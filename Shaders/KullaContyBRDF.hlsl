@@ -70,10 +70,10 @@ float3 KC_MultiScatterFromDirectionalAlbedo(
 
     float3 FAvg = KC_AverageFresnelSchlick(saturate(F0));
 
-    // Kulla-Conty Fresnel factor. The square is intentional: a path in the
-    // multiple-scattering lobe encounters Fresnel on entry and on exit.
+    // Kulla-Conty Fresnel factor from the corrected 2017 Imageworks slides.
+    // FAvg * EAvg is the first term of the multiple-bounce geometric series.
     float3 fresnelDenominator = max(1.0 - FAvg * (1.0 - E_Avg), 1.0e-5);
-    float3 FMs = FAvg * FAvg * E_Avg / fresnelDenominator;
+    float3 FMs = FAvg * E_Avg / fresnelDenominator;
 
     float energyDenominator = KC_PI * max(1.0 - E_Avg, 1.0e-5);
     return FMs * (1.0 - E_NoV) * (1.0 - E_NoL) / energyDenominator;

@@ -32,6 +32,7 @@ The primary outputs are:
 | `*.pfm` | Unquantized reference copies for validation |
 | `*_preview.png` | 8-bit previews only; do not use them for final measurements |
 | `metadata.json` | Resolution, sample count, model and output ranges |
+| `validation.json` | Automated white-furnace and quadrature checks |
 
 The generator and runtime shader both use perceptual roughness with
 `alpha = roughness²` and exact separable Smith GGX geometry.
@@ -87,7 +88,7 @@ E_Avg = saturate(E_Avg);
 F0 = saturate(F0);
 
 float3 FAvg = F0 + (1.0 - F0) / 21.0;
-float3 FMs = FAvg * FAvg * E_Avg /
+float3 FMs = FAvg * E_Avg /
     max(1.0 - FAvg * (1.0 - E_Avg), 1.0e-5);
 
 return FMs * (1.0 - E_NoV) * (1.0 - E_NoL) /
@@ -119,14 +120,51 @@ for a controlled BRDF experiment, not a production material.
 
 ## 6. Production integration
 
-For a production result, call the same functions from a custom engine shading
-model or a supported Substrate BSDF path. The integration point must have access
-to each light's `L`, radiance, attenuation and shadow term. Add `f_ms` to the
-single-scatter GGX BRDF before multiplication by incident radiance and `NoL`.
+The repository now includes an experimental UE 5.8.1 engine shading-model patch
+under `EnginePatch/UE5.8.1`. It adds `MSM_KullaConty` to the material editor and
+evaluates the compensation inside UE's light loop, where every light's
+direction, radiance and attenuation are available. It deliberately evaluates
+raw single-scatter GGX and then adds the Kulla-Conty lobe, so UE's optional
+Default Lit energy compensation is not applied a second time.
 
-Keep the LUT geometry function consistent with the single-scatter GGX geometry.
-If the engine BRDF uses a different correlated Smith approximation, regenerate
-the LUT using that same function.
+The engine implementation reuses UE's own GGX directional-albedo texture. It
+therefore does not bind the generated project LUTs. The default path stores the
+32 per-roughness `E_avg` values derived from UE 5.8.1's texture as shader
+constants and linearly interpolates them, reducing the direct-light path from
+six texture samples to two. A compile-time four-point Gauss-Legendre path is
+retained for comparison by defining `KULLA_CONTY_REFERENCE_EAVG=1`.
+
+The source data and fast path are reproducible: run
+`Tools/ExportUEEnergyLUT.py` through UnrealEditor-Cmd, then run
+`Tools/AnalyzeUEEnergyLUT.py`. Against 128-point integration of UE's bilinearly
+sampled 32×32 texture, the embedded float32 table measures `2.9066e-8` maximum
+`E_avg` error and `9.4947e-6` maximum white-furnace error on roughness
+`[0.02, 1]`. These numerical results do not replace a source-build GPU timing.
+
+The runtime A/B is reproducible once a patched source build is available:
+
+```powershell
+.\EnginePatch\UE5.8.1\Benchmark-EAvgModes.ps1 `
+  -EngineRoot 'D:\UnrealEngine-5.8.1' `
+  -Map '/Game/RowCompareTest' `
+  -TrialsPerMode 5
+```
+
+The script switches only the installed helper's compile-time default, runs
+counterbalanced Fast/Reference captures through Unreal's GPU CSV profiler, then
+restores the original shader bytes. Raw CSV files plus `summary.json`,
+`summary.csv`, and chart-ready `paired_trials.csv` are written under ignored
+`BenchmarkResults/`. The report uses paired-trial deltas and deterministic 95%
+bootstrap confidence intervals; fewer than three pairs cannot produce a
+performance claim. Use a source build; the workflow deliberately refuses a
+Launcher installation.
+
+See [`EnginePatch/UE5.8.1/README.md`](../EnginePatch/UE5.8.1/README.md) for source
+engine requirements, installation, rollback and current renderer limitations.
+
+For the standalone material experiment, keep the generated LUT geometry
+function consistent with the reference single-scatter GGX implementation. The
+engine shading model avoids that mismatch by using UE's own energy LUT.
 
 ## 7. Evaluation protocol
 
@@ -149,5 +187,15 @@ Capture roughness values 0.0 to 1.0 and include:
   multiple-scattering reference
 - GPU time and texture-sample count
 
+Save the baseline and candidate as separate pixel-aligned files. Use
+`KullaContyImageCompare` to produce linear metrics and difference images; do not
+measure the existing combined presentation screenshots. The exact capture and
+comparison contract is in [`IMAGE_VALIDATION.md`](IMAGE_VALIDATION.md).
+
 These measurements support an energy-conservation claim much more strongly than
 tone-mapped screenshots alone.
+
+The CPU-side white-furnace and `E_avg` quadrature checks, compiler disassembly,
+and paired GPU timing capture are automated; see
+[`VALIDATION.md`](VALIDATION.md). The remaining evidence work is to execute the
+GPU run on a source engine and produce the image-space/path-traced comparison.

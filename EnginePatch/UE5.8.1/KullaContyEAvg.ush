@@ -1,0 +1,58 @@
+#ifndef KULLA_CONTY_REFERENCE_EAVG
+#define KULLA_CONTY_REFERENCE_EAVG 0
+#endif
+
+float KCAverageGGXDirectionalAlbedoReference(float Roughness)
+{
+	// Four-point Gauss-Legendre integration on [0, 1]:
+	// E_avg = 2 * integral_0^1 E(mu) * mu dmu.
+	const float4 Mu = float4(0.0694318442f, 0.3300094782f, 0.6699905218f, 0.9305681558f);
+	const float4 Weight = float4(0.1739274226f, 0.3260725774f, 0.3260725774f, 0.1739274226f);
+
+	float4 E;
+	E.x = GGXEnergyLookupEnv(Roughness, Mu.x).x;
+	E.y = GGXEnergyLookupEnv(Roughness, Mu.y).x;
+	E.z = GGXEnergyLookupEnv(Roughness, Mu.z).x;
+	E.w = GGXEnergyLookupEnv(Roughness, Mu.w).x;
+	return saturate(2.0f * dot(Weight, E * Mu));
+}
+
+// E_avg for each roughness row of UE 5.8.1's 32x32
+// /Engine/EngineMaterials/EnergyConservation/GGX_ReflectionEnergy asset.
+// The values were integrated from the exported HALF data, then validated with
+// Tools/AnalyzeUEEnergyLUT.py. Linear interpolation exactly preserves the
+// roughness interpolation of UE's bilinear texture lookup while avoiding the
+// four E_avg texture samples in every direct-light evaluation.
+static const float KCEAverageDirectionalAlbedoLUT[32] =
+{
+	1.0000000000f, 0.9999790387f, 0.9997913244f, 0.9991299546f,
+	0.9982712624f, 0.9964940853f, 0.9937257187f, 0.9897942448f,
+	0.9843362457f, 0.9773015711f, 0.9684281677f, 0.9575925557f,
+	0.9447396784f, 0.9296031229f, 0.9123690977f, 0.8929170867f,
+	0.8712412313f, 0.8474972307f, 0.8219111232f, 0.7945507329f,
+	0.7656587564f, 0.7355226865f, 0.7043378976f, 0.6723453930f,
+	0.6400073596f, 0.6075377833f, 0.5751026665f, 0.5431731856f,
+	0.5117343602f, 0.4811196186f, 0.4515208308f, 0.4230236840f
+};
+
+float KCAverageGGXDirectionalAlbedoFast(float Roughness)
+{
+	const float Position = saturate(Roughness) * 32.0f - 0.5f;
+	const int LowerUnclamped = (int)floor(Position);
+	const float Blend = Position - (float)LowerUnclamped;
+	const int Lower = clamp(LowerUnclamped, 0, 31);
+	const int Upper = clamp(LowerUnclamped + 1, 0, 31);
+	return lerp(
+		KCEAverageDirectionalAlbedoLUT[Lower],
+		KCEAverageDirectionalAlbedoLUT[Upper],
+		Blend);
+}
+
+float KCAverageGGXDirectionalAlbedo(float Roughness)
+{
+#if KULLA_CONTY_REFERENCE_EAVG
+	return KCAverageGGXDirectionalAlbedoReference(Roughness);
+#else
+	return KCAverageGGXDirectionalAlbedoFast(Roughness);
+#endif
+}

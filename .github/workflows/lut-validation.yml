@@ -1,0 +1,59 @@
+name: LUT numerical validation
+
+on:
+  push:
+    paths:
+      - "LUT/**"
+      - "Shaders/**"
+      - ".github/workflows/lut-validation.yml"
+  pull_request:
+    paths:
+      - "LUT/**"
+      - "Shaders/**"
+      - ".github/workflows/lut-validation.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-latest
+            executable: ./LUT/build/KullaContyLUTGenerator
+            compare_executable: ./LUT/build/KullaContyImageCompare
+          - name: Windows MSVC
+            os: windows-latest
+            executable: .\LUT\build\Release\KullaContyLUTGenerator.exe
+            compare_executable: .\LUT\build\Release\KullaContyImageCompare.exe
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure tools
+        run: cmake -S LUT -B LUT/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tools
+        run: cmake --build LUT/build --config Release
+
+      - name: Generate and validate reference LUTs
+        run: ${{ matrix.executable }} --size 256 --samples 1024 --output LUT/GeneratedCI
+
+      - name: Validate image comparison pipeline
+        run: ${{ matrix.compare_executable }} --baseline cornell_box.png --candidate cornell_box.png --output LUT/GeneratedCI/ImageCompare --roi "100,100,200,200" --fail-mae 0
+
+      - name: Upload validation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ matrix.os }}
+          path: |
+            LUT/GeneratedCI/metadata.json
+            LUT/GeneratedCI/validation.json
+            LUT/GeneratedCI/ImageCompare/metrics.json
+            LUT/GeneratedCI/ImageCompare/absolute_difference.png
+            LUT/GeneratedCI/ImageCompare/signed_luminance_difference.png
+          if-no-files-found: error

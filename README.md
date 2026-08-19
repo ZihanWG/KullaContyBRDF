@@ -1,5 +1,9 @@
 # Kulla–Conty multi-scattering BRDF in Unreal Engine 5
 
+[![LUT numerical validation](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/lut-validation.yml/badge.svg)](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/lut-validation.yml)
+[![E_avg shader validation](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/shader-validation.yml/badge.svg)](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/shader-validation.yml)
+[![Validation tool tests](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/tool-tests.yml/badge.svg)](https://github.com/ZihanWG/KullaContyBRDF/actions/workflows/tool-tests.yml)
+
 An experimental real-time implementation of Kulla–Conty energy compensation
 for isotropic GGX materials. The project precomputes directional albedo LUTs on
 the CPU, evaluates a multiple-scattering BRDF term at runtime, and compares it
@@ -8,6 +12,10 @@ with a single-scattering GGX baseline in controlled UE5 scenes.
 ![Roughness row comparison](roughness_row.png)
 
 ![Cornell box comparison](cornell_box.png)
+
+These are presentation contact sheets, not quantitative inputs. New validation
+captures use separate pixel-aligned linear files and the documented
+[image-space protocol](Docs/IMAGE_VALIDATION.md).
 
 ## Why this project exists
 
@@ -34,19 +42,24 @@ Fresnel absorption over repeated bounces.
 ## What is implemented
 
 - CPU Monte Carlo integration using a Hammersley sequence
-- GGX half-vector importance sampling
+- Heitz GGX visible-normal (VNDF) importance sampling
 - Exact separable Smith GGX masking-shadowing
 - `E(NdotX, roughness)` directional-albedo LUT
 - `E_avg(roughness)` cosine-weighted average LUT
 - Optional Schlick split-sum A/B LUT
+- Automated white-furnace, colored-energy and `E_avg` quadrature validation
+- Linear HDR/PNG image metrics with ROI, absolute and signed difference output
 - UE-ready 16-bit linear PNG, Radiance HDR and unquantized PFM output
 - Complete light- and view-dependent Kulla–Conty reference HLSL
+- UE 5.8.1 source-engine patch with a selectable `Kulla-Conty` shading model
+- UE 5.8.1 fast `E_avg` path derived and validated from the official Engine LUT
 - UE5 roughness-row and Cornell-box evaluation scenes
+- Controlled Nanite, Virtual Shadow Map and Lumen learning labs
 
-The project distinguishes a controlled BRDF experiment from a production UE
-shading-model integration. A regular Default Lit Custom Expression does not
-replace UE's internal BRDF; see [the UE5 integration guide](Docs/UE5_INTEGRATION.md)
-for both supported paths.
+The project distinguishes a controlled BRDF experiment from an experimental
+source-engine shading-model integration. A regular Default Lit Custom Expression
+does not replace UE's internal BRDF; see [the UE5 integration guide](Docs/UE5_INTEGRATION.md)
+for both paths.
 
 ## Repository layout
 
@@ -54,9 +67,20 @@ for both supported paths.
 Config/                         UE project configuration
 Content/                        Test maps, materials and imported LUT assets
 Docs/UE5_INTEGRATION.md         Material setup and evaluation protocol
+Docs/VALIDATION.md              Numerical test method and reference results
+Docs/IMAGE_VALIDATION.md        Pixel-aligned capture and difference protocol
+Docs/UE5_RENDERING_LABS.md      Nanite, VSM and Lumen guided experiments
+EnginePatch/UE5.8.1/            Source-engine shading model and installer
 LUT/LUT/LUT.cpp                 Reproducible LUT generator
+LUT/Compare/Compare.cpp         HDR/PNG image-space comparison tool
 LUT/CMakeLists.txt              Portable generator build
 Shaders/KullaContyBRDF.hlsl     Reference GGX + Kulla–Conty implementation
+Tools/ExportUEEnergyLUT.py      Export UE's official energy LUT to EXR
+Tools/AnalyzeUEEnergyLUT.py     Validate and rank engine-side E_avg fast paths
+Tools/SummarizeUECsvProfile.py  Summarize paired Unreal GPU CSV captures
+Tools/Tests/                    Regression tests for validation/reporting tools
+EnginePatch/UE5.8.1/Test-EAvgShader.ps1  Compile/disassemble SM5 and SM6 fast paths
+EnginePatch/UE5.8.1/Benchmark-EAvgModes.ps1  Run counterbalanced GPU A/B captures
 KC.uproject                     Unreal Engine project
 ```
 
@@ -93,9 +117,63 @@ Generated files:
 | `*.pfm` | Full-float validation data |
 | `*_preview.png` | Human-readable 8-bit previews only |
 | `metadata.json` | Parameters, conventions and numerical ranges |
+| `validation.json` | White-furnace, colored-energy and quadrature error report |
 
 Using texel centers avoids the `NdotX = 0` singularity. Both generator and HLSL
 use perceptual roughness with `alpha = roughness²`.
+
+## Numerical validation
+
+The generator now fails when its numerical checks exceed declared tolerances.
+For the reference 256×256 LUT with 1,024 samples per texel:
+
+| Metric | Result |
+| --- | ---: |
+| White-furnace maximum absolute error | 0.0002363713 |
+| White-furnace RMS error | 0.0000039344 |
+| Four-point `E_avg` maximum absolute error | 0.0006462380 |
+| Four-point `E_avg` RMS error | 0.0001741692 |
+| Maximum tested colored directional albedo | 0.9510494811 |
+
+All checks pass. The white-furnace domain begins at roughness and `NdotV` 0.02
+to match the project's minimum-roughness operating range and avoid evaluating
+the removable numerical singularity at `E_avg = 1`. See
+[the validation report](Docs/VALIDATION.md) for the equations and limitations.
+The same 256×256 validation runs on Windows/MSVC and Linux/GCC in GitHub Actions;
+both jobs upload `metadata.json` and `validation.json` as build artifacts.
+
+For the UE 5.8.1 source-engine path, an additional analysis uses Epic's own
+32×32 GGX energy texture. Its embedded float32 `E_avg` table reduces the
+per-light texture-fetch count from six to two while measuring `2.9066e-8`
+maximum `E_avg` error and `9.4947e-6` maximum white-furnace error over roughness
+`[0.02, 1]`. See [the validation report](Docs/VALIDATION.md).
+
+The isolated helper also passes Windows SDK FXC/SM5 and DXC/SM6 disassembly
+checks. SM5 uses an immediate constant buffer and approximately 12 instruction
+slots. SM6 keeps the table as a read-only global, performs two indexed loads,
+declares no bound resource and does not copy the table into temporary memory.
+A dedicated Windows GitHub Actions job reruns both checks and publishes the two
+compiler disassemblies as reviewable artifacts.
+
+GPU reports are analyzed as paired trials rather than as two unrelated frame
+pools. The report includes each trial's median delta, mean delta and speedup
+with deterministic 95% bootstrap confidence intervals, plus cross-trial
+coefficient of variation. Fewer than three paired trials is automatically
+reported as insufficient evidence. A separate CI job exercises the parser and
+the complete raw-CSV-to-report path using only the Python standard library.
+
+## Image-space validation
+
+The CMake build also produces `KullaContyImageCompare`. Given two separate,
+pixel-aligned PNG, Radiance HDR or UE-style scanline OpenEXR captures, it reports
+linear RGB/luminance errors and writes absolute and signed difference images.
+It supports 8/16-bit LDR, HALF/FLOAT EXR, an object ROI, visualization gain and
+a CI failure threshold.
+
+The existing combined screenshots are illustrative and are not treated as
+quantitative inputs. See the [image validation protocol](Docs/IMAGE_VALIDATION.md)
+for the capture contract, command line and the distinction between “visible
+change” and “lower error against an independent reference.”
 
 ## Runtime evaluation
 
@@ -129,17 +207,21 @@ These screenshots demonstrate a visible appearance change, but do not by
 themselves prove lower physical error. A stronger evaluation should use a fixed
 mesh and camera, manual exposure, linear HDR captures, difference images,
 hemispherical energy measurements and a multiple-scattering reference. The full
-protocol is documented in [Docs/UE5_INTEGRATION.md](Docs/UE5_INTEGRATION.md).
+protocol is documented in [Docs/UE5_INTEGRATION.md](Docs/UE5_INTEGRATION.md) and
+[Docs/IMAGE_VALIDATION.md](Docs/IMAGE_VALIDATION.md).
 
 ## Important limitations
 
 - The existing `.uasset` materials were created as an early prototype and must
   be reconnected to the corrected `NoV` + `NoL` implementation.
-- Production integration requires access to UE's per-light shading loop through
-  a custom shading model or a supported Substrate path.
+- The included engine shading model targets UE 5.8.1's legacy, non-Substrate
+  desktop path and requires a source-built engine.
+- Anisotropy, mobile rendering and path tracing are not implemented for the
+  custom shading model yet.
 - The included scenes cover simple spheres rather than layered or anisotropic
   materials.
-- GPU performance and numerical error still need to be measured.
+- A counterbalanced Fast/Reference GPU benchmark is automated, but measured GPU
+  results still require the first run on a patched UE 5.8.1 source build.
 - The current LUT and shader use separable Smith GGX. A production integration
   must regenerate the LUT if its single-scatter BRDF uses a different geometry
   approximation.
