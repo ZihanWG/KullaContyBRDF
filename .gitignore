@@ -1,0 +1,31 @@
+# Unreal Engine generated data
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+
+# Visual Studio and native build output
+**/.vs/
+**/x64/
+**/Debug/
+**/Release/
+*.VC.db
+*.VC.opendb
+*.ipch
+*.ilk
+*.obj
+*.pdb
+*.recipe
+*.tlog
+*.vcxproj.user
+
+# Reproducible LUT output
+LUT/Generated/
+LUT/build/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.user
+*.suo
