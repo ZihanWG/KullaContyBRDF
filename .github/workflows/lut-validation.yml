@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure tools
         run: cmake -S LUT -B LUT/build -DCMAKE_BUILD_TYPE=Release
@@ -47,7 +47,7 @@ jobs:
         run: ${{ matrix.compare_executable }} --baseline cornell_box.png --candidate cornell_box.png --output LUT/GeneratedCI/ImageCompare --roi "100,100,200,200" --fail-mae 0
 
       - name: Upload validation artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: validation-${{ matrix.os }}
           path: |

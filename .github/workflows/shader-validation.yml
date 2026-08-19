@@ -21,14 +21,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Compile and inspect SM5 and SM6
         shell: pwsh
         run: .\EnginePatch\UE5.8.1\Test-EAvgShader.ps1
 
       - name: Upload compiler disassembly
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: eavg-shader-disassembly
           path: |
