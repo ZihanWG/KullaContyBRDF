@@ -19,7 +19,16 @@ Saved/
 *.recipe
 *.tlog
 *.vcxproj.user
+*.sln
+*.vcxproj
+*.vcxproj.filters
 **/__pycache__/
+
+# Keep only the stb files used by the validation tools. The remaining files in
+# a local upstream checkout are intentionally not versioned.
+LUT/stb-master/*
+!LUT/stb-master/LICENSE
+!LUT/stb-master/stb_image.h
 
 # Reproducible LUT output
 LUT/Generated/

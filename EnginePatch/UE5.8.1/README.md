@@ -9,6 +9,15 @@ The patch is intentionally not applied to an Epic Games Launcher installation.
 It changes Engine C++ headers and modules, so it requires a UE 5.8.1 source
 checkout that can rebuild `UnrealEditor`.
 
+## Distribution boundary
+
+This directory does not contain an Unreal Engine checkout. Users must obtain a
+separately licensed UE 5.8.1 source tree from Epic. Small Engine Code matching
+anchors used to support installation remain governed by the Unreal Engine EULA
+and are not licensed by this project. Do not copy additional Engine Code into
+this repository. See the repository's [licensing boundary](../../Docs/LICENSING.md)
+and [third-party notices](../../THIRD_PARTY_NOTICES.md).
+
 ## What the patch changes
 
 - adds `Kulla-Conty` to the Material Shading Model selector

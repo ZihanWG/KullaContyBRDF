@@ -9,6 +9,10 @@ for isotropic GGX materials. The project precomputes directional albedo LUTs on
 the CPU, evaluates a multiple-scattering BRDF term at runtime, and compares it
 with a single-scattering GGX baseline in controlled UE5 scenes.
 
+**Release status:** research preview. The portable validation tools are covered
+by CI; the UE 5.8.1 source patch still requires its first clean source-engine
+build, measured GPU run and independent-reference image comparison.
+
 ![Roughness row comparison](roughness_row.png)
 
 ![Cornell box comparison](cornell_box.png)
@@ -61,6 +65,16 @@ source-engine shading-model integration. A regular Default Lit Custom Expression
 does not replace UE's internal BRDF; see [the UE5 integration guide](Docs/UE5_INTEGRATION.md)
 for both paths.
 
+## Compatibility
+
+| Component | Supported/tested scope | Status |
+| --- | --- | --- |
+| LUT generator and image comparison | Windows/MSVC and Linux/GCC, C++17 | CI validated |
+| Isolated `E_avg` shader helper | Windows FXC/SM5 and DXC/SM6 | CI validated |
+| UE source shading model | UE 5.8.1, Windows desktop, SM5/SM6, non-Substrate | Build pending |
+| Forward/deferred/clustered direct lighting | UE 5.8.1 legacy shading-model path | Implemented, runtime evidence pending |
+| Substrate, mobile, anisotropy, path tracing | Not supported | Out of scope |
+
 ## Repository layout
 
 ```text
@@ -70,6 +84,8 @@ Docs/UE5_INTEGRATION.md         Material setup and evaluation protocol
 Docs/VALIDATION.md              Numerical test method and reference results
 Docs/IMAGE_VALIDATION.md        Pixel-aligned capture and difference protocol
 Docs/UE5_RENDERING_LABS.md      Nanite, VSM and Lumen guided experiments
+Docs/LICENSING.md               Project, Unreal Engine and asset license boundary
+Docs/RELEASE_CHECKLIST.md       Public-release evidence and provenance gates
 EnginePatch/UE5.8.1/            Source-engine shading model and installer
 LUT/LUT/LUT.cpp                 Reproducible LUT generator
 LUT/Compare/Compare.cpp         HDR/PNG image-space comparison tool
@@ -81,13 +97,15 @@ Tools/SummarizeUECsvProfile.py  Summarize paired Unreal GPU CSV captures
 Tools/Tests/                    Regression tests for validation/reporting tools
 EnginePatch/UE5.8.1/Test-EAvgShader.ps1  Compile/disassemble SM5 and SM6 fast paths
 EnginePatch/UE5.8.1/Benchmark-EAvgModes.ps1  Run counterbalanced GPU A/B captures
+ASSET_PROVENANCE.md             Origin and redistribution status of committed assets
+THIRD_PARTY_NOTICES.md          Third-party code and Unreal Engine notices
 KC.uproject                     Unreal Engine project
 ```
 
 ## Build and generate the LUTs
 
-The generator requires a C++17 compiler. You can build `LUT/LUT.sln` in Visual
-Studio, or use CMake:
+The generator requires a C++17 compiler and CMake. Visual Studio, Ninja and
+Unix Makefiles are supported through the normal CMake generator selection:
 
 ```text
 cmake -S LUT -B LUT/build
@@ -232,7 +250,16 @@ protocol is documented in [Docs/UE5_INTEGRATION.md](Docs/UE5_INTEGRATION.md) and
   at Imageworks*, SIGGRAPH 2017 course notes
 - Eric Heitz et al., *Multiple-Scattering Microfacet BSDFs with the Smith Model*
 - Unreal Engine rendering and material documentation
-- Parametric Cornell Box scene from the UE Fab library
+- Parametric Cornell Box scene used by the original experiment; see
+  [asset provenance](ASSET_PROVENANCE.md) before redistributing source assets
+
+## Licensing and redistribution
+
+The repository separates project-authored code, third-party code, Unreal
+Engine dependencies and content assets. See [licensing](Docs/LICENSING.md),
+[third-party notices](THIRD_PARTY_NOTICES.md) and
+[asset provenance](ASSET_PROVENANCE.md). A root project license must be chosen
+before calling this a complete public release.
 
 ## Author
 
